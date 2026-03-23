@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../services/local_db_service.dart';
 import '../../services/calculation_service.dart';
+import '../../services/voice_service.dart';
+import '../../services/voice_purchase_parser.dart';
 import '../../widgets/custom_button.dart';
 import '../../widgets/custom_text_field.dart';
 import '../bill/bill_preview_screen.dart';
@@ -18,11 +20,15 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
   final densityController = TextEditingController();
   final rateController = TextEditingController();
 
+  final VoiceService _voiceService = VoiceService();
+
   double densityDecimal = 0;
   double kilograms = 0;
   double totalAmount = 0;
   bool isLoading = false;
+  bool isListening = false;
   String status = 'Not Paid';
+  String spokenText = '';
 
   void calculateAmount() {
     final liters = double.tryParse(litersController.text.trim()) ?? 0;
@@ -50,6 +56,71 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
         ),
       );
     }
+  }
+
+  Future<void> startVoiceInput() async {
+    final ok = await _voiceService.init();
+
+    if (!ok) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Microphone permission not available')),
+      );
+      return;
+    }
+
+    setState(() {
+      isListening = true;
+      spokenText = '';
+    });
+
+    await _voiceService.startListening(
+      onResult: (text) {
+        final parsed = VoicePurchaseParser.parse(text);
+
+        setState(() {
+          spokenText = text;
+
+          if ((parsed['sellerName'] ?? '').toString().isNotEmpty) {
+            sellerController.text = parsed['sellerName'].toString();
+          }
+
+          final liters = parsed['liters'];
+          if (liters != null && liters != 0) {
+            litersController.text = liters.toString();
+          }
+
+          final density = parsed['density'];
+          if (density != null && density != 0) {
+            densityController.text = density.toString();
+          }
+
+          final rate = parsed['rate'];
+          if (rate != null && rate != 0) {
+            rateController.text = rate.toString();
+          }
+
+          status = parsed['status']?.toString() ?? 'Not Paid';
+        });
+
+        final hasEnoughData =
+            (double.tryParse(litersController.text.trim()) ?? 0) > 0 &&
+            (int.tryParse(densityController.text.trim()) ?? 0) > 0 &&
+            (double.tryParse(rateController.text.trim()) ?? 0) > 0;
+
+        if (hasEnoughData) {
+          calculateAmount();
+        }
+      },
+    );
+  }
+
+  Future<void> stopVoiceInput() async {
+    await _voiceService.stopListening();
+    if (!mounted) return;
+    setState(() {
+      isListening = false;
+    });
   }
 
   Future<void> savePurchase() async {
@@ -101,6 +172,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
         totalAmount = 0;
         status = 'Not Paid';
         isLoading = false;
+        spokenText = '';
       });
 
       Navigator.push(
@@ -122,6 +194,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
     litersController.dispose();
     densityController.dispose();
     rateController.dispose();
+    _voiceService.stopListening();
     super.dispose();
   }
 
@@ -138,6 +211,67 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
     );
   }
 
+  Widget buildVoiceSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Icon(
+                  isListening ? Icons.mic : Icons.mic_none,
+                  color: isListening ? Colors.red : null,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    isListening ? 'Listening...' : 'Voice Purchase',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (spokenText.isNotEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(spokenText),
+              ),
+            if (spokenText.isNotEmpty) const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: isListening ? null : startVoiceInput,
+                    icon: const Icon(Icons.mic),
+                    label: const Text('Start Voice'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: isListening ? stopVoiceInput : null,
+                    icon: const Icon(Icons.stop),
+                    label: const Text('Stop'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -146,6 +280,8 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
+            buildVoiceSection(),
+            const SizedBox(height: 16),
             CustomTextField(
               controller: sellerController,
               hintText: 'Seller Name',
@@ -189,9 +325,31 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
             const SizedBox(height: 16),
             Align(
               alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: calculateAmount,
-                child: const Text('Calculate'),
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: calculateAmount,
+                    child: const Text('Calculate'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      sellerController.clear();
+                      litersController.clear();
+                      densityController.clear();
+                      rateController.clear();
+
+                      setState(() {
+                        densityDecimal = 0;
+                        kilograms = 0;
+                        totalAmount = 0;
+                        status = 'Not Paid';
+                        spokenText = '';
+                      });
+                    },
+                    child: const Text('Clear'),
+                  ),
+                ],
               ),
             ),
             Card(
