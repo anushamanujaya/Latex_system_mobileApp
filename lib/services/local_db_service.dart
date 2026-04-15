@@ -11,6 +11,10 @@ class LocalDBService {
     return box.values.map((item) => Map<String, dynamic>.from(item)).toList();
   }
 
+  static Future<void> updateTransaction(dynamic key, Map<String, dynamic> data) async {
+  await box.put(key, data);
+  }
+
   static List<Map<String, dynamic>> getTransactionsByMonth({
     required int year,
     required int month,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:hive/hive.dart';
 import '../../services/local_db_service.dart';
+import '../purchase/purchase_screen.dart';
 
 class TransactionsScreen extends StatefulWidget {
   const TransactionsScreen({super.key});
@@ -25,6 +26,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         .where((entry) {
           final raw = entry.value['createdAt'];
           if (raw == null) return false;
+
           try {
             final dt = DateTime.parse(raw.toString());
             return dt.year == selectedMonth.year &&
@@ -61,6 +63,56 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       setState(() {
         selectedMonth = DateTime(picked.year, picked.month);
       });
+    }
+  }
+
+  Future<void> openEditScreen(dynamic key, Map<String, dynamic> item) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PurchaseScreen(
+          transactionKey: key,
+          existingTransaction: Map<String, dynamic>.from(item),
+        ),
+      ),
+    );
+
+    if (result == true) {
+      setState(() {});
+    }
+  }
+
+  Future<void> deleteTransaction(dynamic key) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Transaction'),
+        content: const Text(
+          'Are you sure you want to delete this transaction?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await LocalDBService.deleteTransaction(key);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Transaction deleted successfully')),
+      );
+
+      setState(() {});
     }
   }
 
@@ -105,7 +157,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                       try {
                         formattedDate = DateFormat(
                           'yyyy-MM-dd – hh:mm a',
-                        ).format(DateTime.parse(item['createdAt']));
+                        ).format(DateTime.parse(item['createdAt'].toString()));
                       } catch (_) {}
 
                       return Card(
@@ -115,22 +167,22 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                item['sellerName'] ?? '',
+                                item['sellerName']?.toString() ?? '',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 18,
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              Text('Liters: ${item['liters']}'),
-                              Text('Density: ${item['density']}'),
+                              Text('Liters: ${item['liters'] ?? ''}'),
+                              Text('Density: ${item['density'] ?? ''}'),
                               Text(
-                                'Density Decimal: ${item['densityDecimal']}',
+                                'Density Decimal: ${item['densityDecimal'] ?? ''}',
                               ),
-                              Text('Kilograms: ${item['kilograms']}'),
-                              Text('Rate: ${item['rate']}'),
-                              Text('Total: ${item['totalAmount']}'),
-                              Text('Status: ${item['status']}'),
+                              Text('Kilograms: ${item['kilograms'] ?? ''}'),
+                              Text('Rate: ${item['rate'] ?? ''}'),
+                              Text('Total: ${item['totalAmount'] ?? ''}'),
+                              Text('Status: ${item['status'] ?? ''}'),
                               const SizedBox(height: 6),
                               Text(
                                 formattedDate,
@@ -138,15 +190,25 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                               ),
                               Align(
                                 alignment: Alignment.centerRight,
-                                child: IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
-                                  ),
-                                  onPressed: () async {
-                                    await box.delete(key);
-                                    setState(() {});
-                                  },
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.edit,
+                                        color: Colors.blue,
+                                      ),
+                                      onPressed: () =>
+                                          openEditScreen(key, item),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.delete,
+                                        color: Colors.red,
+                                      ),
+                                      onPressed: () => deleteTransaction(key),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],

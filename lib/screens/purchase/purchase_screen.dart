@@ -8,7 +8,14 @@ import '../../widgets/custom_text_field.dart';
 import '../bill/bill_preview_screen.dart';
 
 class PurchaseScreen extends StatefulWidget {
-  const PurchaseScreen({super.key});
+  final dynamic transactionKey;
+  final Map<String, dynamic>? existingTransaction;
+
+  const PurchaseScreen({
+    super.key,
+    this.transactionKey,
+    this.existingTransaction,
+  });
 
   @override
   State<PurchaseScreen> createState() => _PurchaseScreenState();
@@ -29,6 +36,28 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
   bool isListening = false;
   String status = 'Not Paid';
   String spokenText = '';
+
+  bool get isEditMode =>
+      widget.transactionKey != null && widget.existingTransaction != null;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final tx = widget.existingTransaction;
+
+    if (tx != null) {
+      sellerController.text = tx['sellerName']?.toString() ?? '';
+      litersController.text = tx['liters']?.toString() ?? '';
+      densityController.text = tx['density']?.toString() ?? '';
+      rateController.text = tx['rate']?.toString() ?? '';
+      status = tx['status']?.toString() ?? 'Not Paid';
+
+      densityDecimal = (tx['densityDecimal'] ?? 0).toDouble();
+      kilograms = (tx['kilograms'] ?? 0).toDouble();
+      totalAmount = (tx['totalAmount'] ?? 0).toDouble();
+    }
+  }
 
   void calculateAmount() {
     final liters = double.tryParse(litersController.text.trim()) ?? 0;
@@ -100,7 +129,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
             rateController.text = rate.toString();
           }
 
-          status = parsed['status']?.toString() ?? 'Not Paid';
+          status = parsed['status']?.toString() ?? status;
         });
 
         final hasEnoughData =
@@ -123,6 +152,21 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
     });
   }
 
+  void clearForm() {
+    sellerController.clear();
+    litersController.clear();
+    densityController.clear();
+    rateController.clear();
+
+    setState(() {
+      densityDecimal = 0;
+      kilograms = 0;
+      totalAmount = 0;
+      status = 'Not Paid';
+      spokenText = '';
+    });
+  }
+
   Future<void> savePurchase() async {
     final sellerName = sellerController.text.trim();
     final liters = double.tryParse(litersController.text.trim()) ?? 0;
@@ -130,9 +174,9 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
     final rate = double.tryParse(rateController.text.trim()) ?? 0;
 
     if (sellerName.isEmpty || liters <= 0 || density <= 0 || rate <= 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Please enter valid data')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter valid data')),
+      );
       return;
     }
 
@@ -154,37 +198,42 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
         'rate': result.rate,
         'totalAmount': result.totalAmount,
         'status': status,
-        'createdAt': DateTime.now().toIso8601String(),
+        'createdAt':
+            widget.existingTransaction?['createdAt'] ??
+            DateTime.now().toIso8601String(),
+        'updatedAt': DateTime.now().toIso8601String(),
       };
 
-      await LocalDBService.addTransaction(tx);
+      if (isEditMode) {
+        await LocalDBService.updateTransaction(widget.transactionKey, tx);
+      } else {
+        await LocalDBService.addTransaction(tx);
+      }
 
       if (!mounted) return;
 
-      sellerController.clear();
-      litersController.clear();
-      densityController.clear();
-      rateController.clear();
+      setState(() => isLoading = false);
 
-      setState(() {
-        densityDecimal = 0;
-        kilograms = 0;
-        totalAmount = 0;
-        status = 'Not Paid';
-        isLoading = false;
-        spokenText = '';
-      });
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => BillPreviewScreen(transaction: tx)),
-      );
+      if (isEditMode) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Purchase updated successfully')),
+        );
+        Navigator.pop(context, true);
+      } else {
+        clearForm();
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => BillPreviewScreen(transaction: tx),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => isLoading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to save purchase: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save purchase: $e')),
+      );
     }
   }
 
@@ -275,7 +324,9 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('New Purchase')),
+      appBar: AppBar(
+        title: Text(isEditMode ? 'Edit Purchase' : 'New Purchase'),
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -290,9 +341,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
             CustomTextField(
               controller: litersController,
               hintText: 'Liters',
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
             ),
             const SizedBox(height: 16),
             CustomTextField(
@@ -304,14 +353,14 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
             CustomTextField(
               controller: rateController,
               hintText: 'Rate (Rs per kg)',
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               value: status,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+              ),
               items: const [
                 DropdownMenuItem(value: 'Paid', child: Text('Paid')),
                 DropdownMenuItem(value: 'Not Paid', child: Text('Not Paid')),
@@ -333,20 +382,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
                     child: const Text('Calculate'),
                   ),
                   TextButton(
-                    onPressed: () {
-                      sellerController.clear();
-                      litersController.clear();
-                      densityController.clear();
-                      rateController.clear();
-
-                      setState(() {
-                        densityDecimal = 0;
-                        kilograms = 0;
-                        totalAmount = 0;
-                        status = 'Not Paid';
-                        spokenText = '';
-                      });
-                    },
+                    onPressed: clearForm,
                     child: const Text('Clear'),
                   ),
                 ],
@@ -369,7 +405,7 @@ class _PurchaseScreenState extends State<PurchaseScreen> {
             ),
             const SizedBox(height: 24),
             CustomButton(
-              text: 'Save Purchase',
+              text: isEditMode ? 'Update Purchase' : 'Save Purchase',
               onPressed: isLoading ? null : savePurchase,
               isLoading: isLoading,
             ),
